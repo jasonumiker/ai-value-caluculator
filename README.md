@@ -4,6 +4,16 @@ Proofline is a working prototype for measuring the business value of consumption
 
 The objective is not to manufacture a single precise-looking ROI number. It is to create a transparent body of evidence showing what was spent, what changed, what business result followed, and how confident the organization should be in each claim.
 
+## Screenshots
+
+### Portfolio overview
+
+![Proofline portfolio overview showing spend, realized value, ROI assumptions, evidence strength, and capacity realization](public/screenshots/portfolio-overview.png)
+
+| Experience sampling | Outcome studies |
+| --- | --- |
+| ![Proofline sample responses view showing collection progress and response metrics](public/screenshots/sample-responses.png) | ![Proofline outcome studies view showing study designs, measured results, and confidence grades](public/screenshots/outcome-studies.png) |
+
 ## Why This Approach Works
 
 - **It separates "time saved" from "value realized".** Most Copilot ROI decks stop at "users saved X hours" and quietly multiply by a salary rate. That number is almost always wrong, because saved time only becomes money if it is actually reconverted into output, headcount avoidance, or faster revenue. Making realization an explicit, separate step is the single most defensible part of this design.
