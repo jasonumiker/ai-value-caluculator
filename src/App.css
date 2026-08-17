@@ -215,6 +215,8 @@ td strong { color: var(--ink); }
 .study-progress > span { display: block; margin-top: 5px; color: var(--faint); font-size: 8px; }
 .study-footer { flex-wrap: wrap; gap: 9px; padding-top: 13px; border-top: 1px solid var(--line-soft); }
 .study-footer button { margin-left: auto; }
+.study-value { margin-left: auto; color: var(--faint); font-size: 9px; font-weight: 700; }
+.table-empty { padding: 18px; text-align: center; color: var(--faint); font-size: 10px; }
 .methodology-note { display: flex; align-items: flex-start; gap: 12px; padding: 16px 18px; margin-top: 16px; border-left: 3px solid var(--blue); color: #2a538a; background: var(--blue-soft); }
 .methodology-note strong { font-size: 11px; }
 .methodology-note p { margin-top: 3px; color: #557297; font-size: 9px; line-height: 1.5; }

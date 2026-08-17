@@ -1,24 +1,21 @@
 import { useRef, useState, type FormEvent, type ReactNode, type RefObject } from 'react'
 import Papa from 'papaparse'
 import {
-  Activity, ArrowRight, BookOpenCheck, Check, ChevronDown, CircleDollarSign,
-  Clock3, Code2, Database, Download, FileSpreadsheet, FlaskConical, Gauge,
+  Activity, ArrowRight, Check, ChevronDown, CircleDollarSign,
+  Database, Download, FileSpreadsheet, FlaskConical, Gauge,
   GitBranch, Info, LayoutDashboard, Lightbulb, Menu, MessageSquareText,
   MoreHorizontal, Plus, Search, Send, ShieldCheck, Sparkles, Target,
   TrendingUp, Upload, Users, X,
 } from 'lucide-react'
 import './App.css'
+import {
+  calculatePortfolio, estimateProductiveHours, formatCurrency, formatShort,
+  defaultAssumptions, evidenceWeightKeys, confidenceWeightKeys, studies, copilotSpend,
+  type Product, type EvidenceGrade, type Confidence, type ResponseRecord, type Assumptions,
+} from './model'
 
 type Page = 'overview' | 'responses' | 'hypotheses' | 'studies' | 'imports'
-type Product = 'GitHub Copilot' | 'Copilot Cowork'
-type EvidenceGrade = 'Observed' | 'Estimated' | 'Modelled' | 'Anecdotal'
-type Confidence = 'High' | 'Medium' | 'Low'
-type PillarLabel = 'Improved Performance' | 'Cost Savings' | 'Innovation / Transformation' | 'Risk Mitigation'
 
-type ResponseRecord = {
-  id: number; role: string; team: string; product: Product; workType: string
-  timeSaved: string; effect: string; outcome: string; date: string
-}
 type Hypothesis = {
   id: number; useCase: string; owner: string; product: Product
   expectedEffect: string; outcome: string; evidence: string
@@ -26,7 +23,7 @@ type Hypothesis = {
 }
 type ImportRecord = {
   id: number; name: string; source: string; rows: number; date: string
-  status: 'Ready' | 'Needs mapping'
+  status: 'Ready' | 'Needs mapping'; columns?: number; note?: string
 }
 type CsvRow = Record<string, string>
 
@@ -53,81 +50,13 @@ const seedHypotheses: Hypothesis[] = [
   { id: 4, useCase: 'Accelerate code review', owner: 'Platform Engineering', product: 'GitHub Copilot', expectedEffect: 'Reduce review wait time', outcome: 'Deliver changes earlier', evidence: 'Pull request cycle time', status: 'Validated' },
 ]
 
-type Study = {
-  id: number; title: string; group: string; metric: string; result: string
-  confidence: string; grade: EvidenceGrade; product: Product; progress: number
-  icon: typeof Activity; baseline?: string; current?: string; comparison?: string
-}
-
-const studies: Study[] = [
-  { id: 1, title: 'Developer delivery cycle', group: '84 engineers · matched teams', metric: 'Median pull request cycle time', result: '18% faster', confidence: 'High', grade: 'Observed', product: 'GitHub Copilot', progress: 100, icon: Code2, baseline: '5.2 days', current: '4.3 days', comparison: 'vs. matched teams, prior quarter' },
-  { id: 2, title: 'Knowledge work preparation', group: '126 participants · pre/post', metric: 'Preparation time per case', result: '31 min saved', confidence: 'Medium', grade: 'Estimated', product: 'Copilot Cowork', progress: 72, icon: BookOpenCheck },
-  { id: 3, title: 'Sales proposal response', group: '42 opportunities · staggered rollout', metric: 'Time to first proposal', result: '2.1 days earlier', confidence: 'Medium', grade: 'Observed', product: 'Copilot Cowork', progress: 46, icon: TrendingUp, baseline: '6.4 days', current: '4.3 days', comparison: 'vs. staggered-rollout control cohort' },
-]
-
 const initialImports: ImportRecord[] = [
   { id: 1, name: 'github-copilot-usage-july.csv', source: 'GitHub Copilot', rows: 842, date: '02 Aug 2026', status: 'Ready' },
   { id: 2, name: 'm365-cowork-consumption-july.csv', source: 'Microsoft 365', rows: 1264, date: '02 Aug 2026', status: 'Ready' },
   { id: 3, name: 'employee-team-map.csv', source: 'Employee mapping', rows: 518, date: '01 Aug 2026', status: 'Ready' },
 ]
 
-const copilotSpend = 28460
-const pillarMetadata: Record<PillarLabel, { color: string; description: string }> = {
-  'Improved Performance': { color: '#087f6b', description: 'Higher throughput and faster delivery' },
-  'Cost Savings': { color: '#de7b22', description: 'Avoided spend and operating cost' },
-  'Innovation / Transformation': { color: '#2f6fce', description: 'New capabilities and redesigned work' },
-  'Risk Mitigation': { color: '#8391a7', description: 'Better quality, control, and resilience' },
-}
 const evidenceColors: Record<EvidenceGrade, string> = { Observed: '#087f6b', Estimated: '#2f6fce', Modelled: '#de7b22', Anecdotal: '#b4bdc5' }
-type Assumptions = {
-  loadedHourlyCost: number; realizationFactor: number
-  observedWeight: number; estimatedWeight: number; modelledWeight: number; anecdotalWeight: number
-  highConfidenceWeight: number; mediumConfidenceWeight: number; lowConfidenceWeight: number
-}
-const defaultAssumptions: Assumptions = {
-  loadedHourlyCost: 65, realizationFactor: 0.55,
-  observedWeight: 1, estimatedWeight: 0.85, modelledWeight: 0.75, anecdotalWeight: 0.4,
-  highConfidenceWeight: 1, mediumConfidenceWeight: 0.9, lowConfidenceWeight: 0.75,
-}
-const evidenceWeightKeys: Record<EvidenceGrade, keyof Assumptions> = {
-  Observed: 'observedWeight', Estimated: 'estimatedWeight', Modelled: 'modelledWeight', Anecdotal: 'anecdotalWeight',
-}
-const confidenceWeightKeys: Record<Confidence, keyof Assumptions> = {
-  High: 'highConfidenceWeight', Medium: 'mediumConfidenceWeight', Low: 'lowConfidenceWeight',
-}
-
-type ValueContribution = {
-  name: string; pillar: PillarLabel; rawValue: number; grade: EvidenceGrade; confidence: Confidence; adjustedValue: number
-}
-
-function calculatePortfolio(hours: number, assumptions: Assumptions) {
-  const evidenceWeights = Object.fromEntries((Object.keys(evidenceWeightKeys) as EvidenceGrade[]).map((grade) => [grade, assumptions[evidenceWeightKeys[grade]]])) as Record<EvidenceGrade, number>
-  const confidenceWeights = Object.fromEntries((Object.keys(confidenceWeightKeys) as Confidence[]).map((confidence) => [confidence, assumptions[confidenceWeightKeys[confidence]]])) as Record<Confidence, number>
-  const rawContributions: Omit<ValueContribution, 'adjustedValue'>[] = [
-    { name: 'Surveyed productivity', pillar: 'Improved Performance', rawValue: hours * assumptions.loadedHourlyCost * assumptions.realizationFactor, grade: 'Estimated', confidence: 'Medium' },
-    { name: 'Earlier delivery study', pillar: 'Improved Performance', rawValue: 84200, grade: 'Observed', confidence: 'High' },
-    { name: 'Avoided operating cost', pillar: 'Cost Savings', rawValue: 40100, grade: 'Observed', confidence: 'High' },
-    { name: 'New capability cases', pillar: 'Innovation / Transformation', rawValue: 52600, grade: 'Anecdotal', confidence: 'Low' },
-    { name: 'Quality and risk valuation', pillar: 'Risk Mitigation', rawValue: 67900, grade: 'Modelled', confidence: 'Medium' },
-  ]
-  const contributions: ValueContribution[] = rawContributions.map((item) => ({ ...item, adjustedValue: item.rawValue * evidenceWeights[item.grade] * confidenceWeights[item.confidence] }))
-  const rawValue = contributions.reduce((sum, item) => sum + item.rawValue, 0)
-  const adjustedValue = contributions.reduce((sum, item) => sum + item.adjustedValue, 0)
-  const pillars = (Object.keys(pillarMetadata) as PillarLabel[]).map((label) => {
-    const matches = contributions.filter((item) => item.pillar === label)
-    return {
-      label, ...pillarMetadata[label],
-      rawValue: matches.reduce((sum, item) => sum + item.rawValue, 0),
-      value: matches.reduce((sum, item) => sum + item.adjustedValue, 0),
-      sourceCount: matches.length,
-    }
-  })
-  const evidenceMix = (Object.keys(evidenceWeights) as EvidenceGrade[]).map((grade) => ({
-    grade,
-    percentage: rawValue === 0 ? 0 : contributions.filter((item) => item.grade === grade).reduce((sum, item) => sum + item.rawValue, 0) / rawValue * 100,
-  }))
-  return { rawValue, adjustedValue, pillars, evidenceMix, evidenceWeights, confidenceWeights, healthScore: rawValue === 0 ? 0 : Math.round(adjustedValue / rawValue * 100) }
-}
 
 const teamEvidence: { team: string; product: Product; spend: number; grossValue: number; grade: EvidenceGrade; confidence: Confidence; trend: string }[] = [
   { team: 'Digital Channels', product: 'GitHub Copilot', spend: 6840, grossValue: 91200, grade: 'Observed', confidence: 'High', trend: '+8%' },
@@ -142,8 +71,26 @@ function readStored<T>(key: string, fallback: T): T {
 }
 function saveStored<T>(key: string, value: T) { localStorage.setItem(key, JSON.stringify(value)) }
 
-function formatCurrency(value: number) { return `$${Math.round(value).toLocaleString('en-US')}` }
-function formatShort(value: number) { return `$${(value / 1000).toFixed(1)}k` }
+const storageKeys = ['proofline-responses', 'proofline-hypotheses', 'proofline-imports', 'proofline-assumptions']
+const storageVersion = '2'
+function ensureStorageVersion() {
+  try {
+    if (localStorage.getItem('proofline-version') !== storageVersion) {
+      storageKeys.forEach((key) => localStorage.removeItem(key))
+      localStorage.setItem('proofline-version', storageVersion)
+    }
+  } catch { /* storage unavailable */ }
+}
+ensureStorageVersion()
+
+function downloadBlob(filename: string, content: string, mime: string) {
+  const blob = new Blob([content], { type: mime })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url; link.download = filename; link.click()
+  URL.revokeObjectURL(url)
+}
+const importTemplateCsv = 'product,team,role,user,consumption,cost\nGitHub Copilot,Digital Channels,Software Engineer,user-1042,320,58.40\nCopilot Cowork,Operations,Business Analyst,user-2087,145,32.10\n'
 
 function ProductMark({ product }: { product: Product }) {
   return product === 'GitHub Copilot' ? <GitBranch size={15} /> : <Sparkles size={15} />
@@ -163,7 +110,8 @@ function App() {
   const [imports, setImports] = useState<ImportRecord[]>(() => readStored('proofline-imports', initialImports))
   const [assumptions, setAssumptions] = useState<Assumptions>(() => ({ ...defaultAssumptions, ...readStored('proofline-assumptions', defaultAssumptions) }))
   const fileInput = useRef<HTMLInputElement>(null)
-  const portfolioHealth = calculatePortfolio(3080, assumptions).healthScore
+  const estimatedHours = estimateProductiveHours(responses)
+  const portfolioHealth = calculatePortfolio(estimatedHours.low, assumptions).healthScore
 
   const navigate = (next: Page) => { setPage(next); setMenuOpen(false) }
   const showNotice = (message: string) => {
@@ -173,6 +121,11 @@ function App() {
     const next = { ...assumptions, [key]: value }; setAssumptions(next); saveStored('proofline-assumptions', next)
   }
   const resetAssumptions = () => { setAssumptions(defaultAssumptions); saveStored('proofline-assumptions', defaultAssumptions) }
+  const exportPortfolio = () => {
+    const snapshot = { exportedAt: new Date().toISOString(), assumptions, responses, hypotheses, imports }
+    downloadBlob(`proofline-portfolio-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(snapshot, null, 2), 'application/json')
+    showNotice('Portfolio snapshot exported.')
+  }
   const submitSurvey = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault(); const data = new FormData(event.currentTarget)
     const next: ResponseRecord = {
@@ -196,12 +149,21 @@ function App() {
   }
   const importCsv = (file: File) => {
     Papa.parse<CsvRow>(file, { header: true, skipEmptyLines: true, complete: ({ data, meta, errors }) => {
-      const recognized = meta.fields?.some((field) => ['product', 'team', 'role', 'user', 'consumption', 'cost'].includes(field.toLowerCase()))
+      const fields = meta.fields ?? []
+      const lower = fields.map((field) => field.toLowerCase())
+      const hasIdentity = lower.some((field) => ['team', 'role', 'user'].includes(field))
+      const recognized = hasIdentity && lower.some((field) => ['product', 'consumption', 'cost'].includes(field))
+      const costField = fields.find((field) => ['cost', 'consumption', 'spend'].includes(field.toLowerCase()))
+      const totalCost = costField ? data.reduce((sum, row) => sum + (Number(row[costField]) || 0), 0) : 0
+      const note = [`${fields.length} columns`, costField ? `${formatCurrency(totalCost)} ${costField.toLowerCase()}` : null].filter(Boolean).join(' · ')
+      const ready = errors.length === 0 && recognized
       const next: ImportRecord = { id: Date.now(), name: file.name,
         source: file.name.toLowerCase().includes('github') ? 'GitHub Copilot' : file.name.toLowerCase().includes('employee') ? 'Employee mapping' : 'Microsoft 365',
-        rows: data.length, date: 'Today', status: errors.length === 0 && recognized ? 'Ready' : 'Needs mapping' }
+        rows: data.length, columns: fields.length, note, date: 'Today', status: ready ? 'Ready' : 'Needs mapping' }
       const updated = [next, ...imports]; setImports(updated); saveStored('proofline-imports', updated)
-      showNotice(`${data.length.toLocaleString()} rows imported from ${file.name}.`)
+      showNotice(ready
+        ? `${data.length.toLocaleString()} rows · ${fields.length} columns imported from ${file.name}.`
+        : `${file.name} imported but needs mapping — an identity field (team, role, user) and a product or cost field are expected.`)
     } })
   }
   const currentTitle = navigation.find((item) => item.id === page)?.label ?? 'Overview'
@@ -224,9 +186,9 @@ function App() {
       <header className="topbar">
         <button className="icon-button menu-button" onClick={() => setMenuOpen(!menuOpen)} aria-label="Toggle navigation"><Menu size={20} /></button>
         <div><p className="eyebrow">AI value portfolio</p><h1>{currentTitle}</h1></div>
-        <div className="header-actions"><label className="period-select"><Clock3 size={16} /><select aria-label="Reporting period"><option>July 2026</option><option>June 2026</option><option>Q2 2026</option></select><ChevronDown size={14} /></label><button className="secondary-button desktop-action"><Download size={16} /> Export</button><button className="primary-button" onClick={() => setSurveyOpen(true)}><Send size={16} /> Sample response</button></div>
+        <div className="header-actions"><button className="secondary-button desktop-action" onClick={exportPortfolio}><Download size={16} /> Export</button><button className="primary-button" onClick={() => setSurveyOpen(true)}><Send size={16} /> Sample response</button></div>
       </header>
-      {page === 'overview' && <Overview onNavigate={navigate} responseCount={responses.length} assumptions={assumptions} onAssumptionChange={updateAssumption} onResetAssumptions={resetAssumptions} />}
+      {page === 'overview' && <Overview onNavigate={navigate} responses={responses} assumptions={assumptions} onAssumptionChange={updateAssumption} onResetAssumptions={resetAssumptions} />}
       {page === 'responses' && <Responses responses={responses} onOpenSurvey={() => setSurveyOpen(true)} />}
       {page === 'hypotheses' && <Hypotheses hypotheses={hypotheses} onOpen={() => setHypothesisOpen(true)} />}
       {page === 'studies' && <Studies />}
@@ -239,8 +201,11 @@ function App() {
   </div>
 }
 
-function Overview({ onNavigate, responseCount, assumptions, onAssumptionChange, onResetAssumptions }: { onNavigate: (page: Page) => void; responseCount: number; assumptions: Assumptions; onAssumptionChange: (key: keyof Assumptions, value: number) => void; onResetAssumptions: () => void }) {
-  const hoursLow = 3080, hoursMid = 3620
+function Overview({ onNavigate, responses, assumptions, onAssumptionChange, onResetAssumptions }: { onNavigate: (page: Page) => void; responses: ResponseRecord[]; assumptions: Assumptions; onAssumptionChange: (key: keyof Assumptions, value: number) => void; onResetAssumptions: () => void }) {
+  const [teamQuery, setTeamQuery] = useState('')
+  const estimated = estimateProductiveHours(responses)
+  const hoursLow = estimated.low, hoursMid = estimated.mid
+  const filteredTeams = teamEvidence.filter((row) => row.team.toLowerCase().includes(teamQuery.trim().toLowerCase()))
   const lowPortfolio = calculatePortfolio(hoursLow, assumptions)
   const midPortfolio = calculatePortfolio(hoursMid, assumptions)
   const realizedLow = lowPortfolio.adjustedValue, realizedMid = midPortfolio.adjustedValue
@@ -260,9 +225,9 @@ function Overview({ onNavigate, responseCount, assumptions, onAssumptionChange, 
     <section className="dashboard-grid">
       <article className="panel value-panel"><PanelTitle kicker="Business Value pillars" title="Evidence-adjusted value" /><div className="value-total"><strong>{formatShort(realizedLow)}</strong><span className="value-tag">adjusted</span><span className="value-upside"><TrendingUp size={14} /> gross {formatShort(lowPortfolio.rawValue)}</span></div><div className="stacked-bar">{pillars.map((item) => <span key={item.label} style={{ width: `${item.value / realizedLow * 100}%`, background: item.color }} />)}</div><div className="mechanism-list">{pillars.map((item) => <div className="mechanism-row" key={item.label}><span className="legend-dot" style={{ background: item.color }} /><span>{item.label}</span><div className="micro-bar"><i style={{ width: `${item.value / maxPillar * 100}%`, background: item.color }} /></div><strong>{formatShort(item.value)}</strong></div>)}</div></article>
       <article className="panel evidence-panel"><div className="panel-header"><div><p className="section-kicker">Evidence mix</p><h2>How strong is the portfolio?</h2></div><button className="text-button" onClick={() => onNavigate('studies')}>View studies <ArrowRight size={15} /></button></div><div className="evidence-donut-wrap"><div className="evidence-donut" style={{ background: `conic-gradient(${mixStops})` }}><div><strong>{lowPortfolio.healthScore}</strong><span>value retained</span></div></div><div className="evidence-legend">{lowPortfolio.evidenceMix.map((item) => <div key={item.grade}><EvidenceBadge grade={item.grade} /><span><strong>{Math.round(item.percentage)}%</strong><small>{Math.round(lowPortfolio.evidenceWeights[item.grade] * 100)}% weight</small></span></div>)}</div></div><div className="evidence-callout"><Info size={17} /><span><strong>{formatCurrency(realizedLow)} retained from {formatCurrency(lowPortfolio.rawValue)} gross value.</strong> Each contribution is adjusted by its evidence and confidence weights.</span></div></article>
-      <article className="panel pillars-panel"><div className="panel-header"><div><p className="section-kicker">Microsoft Business Value framework</p><h2>Value across four strategic pillars</h2></div><span className="response-count">{responseCount} sampled responses</span></div><div className="pillar-grid">{pillars.map((pillar) => <div className="pillar-summary" key={pillar.label}><span className="pillar-swatch" style={{ background: pillar.color }} /><div><span>{pillar.label}</span><strong>{formatCurrency(pillar.value)}</strong><p>{pillar.description}</p><small>Gross {formatCurrency(pillar.rawValue)} · {pillar.sourceCount} evidence source{pillar.sourceCount === 1 ? '' : 's'}</small></div></div>)}</div></article>
+      <article className="panel pillars-panel"><div className="panel-header"><div><p className="section-kicker">Microsoft Business Value framework</p><h2>Value across four strategic pillars</h2></div><span className="response-count">{responses.length} sampled responses</span></div><div className="pillar-grid">{pillars.map((pillar) => <div className="pillar-summary" key={pillar.label}><span className="pillar-swatch" style={{ background: pillar.color }} /><div><span>{pillar.label}</span><strong>{formatCurrency(pillar.value)}</strong><p>{pillar.description}</p><small>Gross {formatCurrency(pillar.rawValue)} · {pillar.sourceCount} evidence source{pillar.sourceCount === 1 ? '' : 's'}</small></div></div>)}</div></article>
     </section>
-    <section className="panel team-panel"><div className="panel-header"><div><p className="section-kicker">Portfolio detail</p><h2>Evidence by team</h2></div><div className="table-actions"><label><Search size={15} /><input placeholder="Find a team" aria-label="Find a team" /></label><button className="filter-button">All evidence <ChevronDown size={14} /></button></div></div><div className="table-scroll"><table><thead><tr><th>Team</th><th>Product</th><th>Spend</th><th>Adjusted value</th><th>ROI</th><th>Confidence</th><th>Trend</th></tr></thead><tbody>{teamEvidence.map((row) => { const adjustedValue = row.grossValue * lowPortfolio.evidenceWeights[row.grade] * lowPortfolio.confidenceWeights[row.confidence]; const roi = adjustedValue / row.spend; return <tr key={row.team}><td><strong>{row.team}</strong></td><td><span className="product-cell"><ProductMark product={row.product} />{row.product}</span></td><td>{formatCurrency(row.spend)}</td><td><strong>{formatCurrency(adjustedValue)}</strong></td><td><span className="roi-pill">{roi.toFixed(1)}×</span></td><td><span className={`confidence-pill ${row.confidence.toLowerCase()}`}>{row.confidence}</span></td><td><span className="trend-value">{row.trend}</span></td></tr> })}</tbody></table></div><button className="table-footer" onClick={() => onNavigate('hypotheses')}>View all teams and hypotheses <ArrowRight size={15} /></button></section>
+    <section className="panel team-panel"><div className="panel-header"><div><p className="section-kicker">Portfolio detail</p><h2>Evidence by team</h2></div><div className="table-actions"><label><Search size={15} /><input placeholder="Find a team" aria-label="Find a team" value={teamQuery} onChange={(event) => setTeamQuery(event.target.value)} /></label></div></div><div className="table-scroll"><table><thead><tr><th>Team</th><th>Product</th><th>Spend</th><th>Adjusted value</th><th>ROI</th><th>Confidence</th><th>Trend</th></tr></thead><tbody>{filteredTeams.map((row) => { const adjustedValue = row.grossValue * lowPortfolio.evidenceWeights[row.grade] * lowPortfolio.confidenceWeights[row.confidence]; const roi = adjustedValue / row.spend; return <tr key={row.team}><td><strong>{row.team}</strong></td><td><span className="product-cell"><ProductMark product={row.product} />{row.product}</span></td><td>{formatCurrency(row.spend)}</td><td><strong>{formatCurrency(adjustedValue)}</strong></td><td><span className="roi-pill">{roi.toFixed(1)}×</span></td><td><span className={`confidence-pill ${row.confidence.toLowerCase()}`}>{row.confidence}</span></td><td><span className="trend-value">{row.trend}</span></td></tr> })}{filteredTeams.length === 0 && <tr><td colSpan={7} className="table-empty">No teams match “{teamQuery}”.</td></tr>}</tbody></table></div><button className="table-footer" onClick={() => onNavigate('hypotheses')}>View all teams and hypotheses <ArrowRight size={15} /></button></section>
   </div>
 }
 
@@ -272,20 +237,31 @@ function MiniStat({ label, value, note }: { label: string; value: string; note: 
 function WeightControl({ label, grade, value, onChange }: { label: string; grade?: EvidenceGrade; value: number; onChange: (value: number) => void }) { return <label className="weight-control"><span>{grade ? <EvidenceBadge grade={grade} /> : label}<strong>{Math.round(value * 100)}%</strong></span><input type="range" min={0} max={100} step={5} value={Math.round(value * 100)} onChange={(event) => onChange(Number(event.target.value) / 100)} aria-label={`${label} weight`} style={{ backgroundSize: `${Math.round(value * 100)}% 100%` }} /></label> }
 
 function Responses({ responses, onOpenSurvey }: { responses: ResponseRecord[]; onOpenSurvey: () => void }) {
-  return <div className="page-content"><section className="sampling-banner"><div className="sampling-icon"><MessageSquareText size={24} /></div><div><p className="section-kicker">Stratified experience sampling</p><h2>July collection is on track</h2><p>287 of 385 target responses · balanced across product, role, team, and usage intensity</p></div><div className="sampling-progress"><strong>75%</strong><div><i style={{ width: '75%' }} /></div><span>98 responses remaining</span></div><button className="primary-button" onClick={onOpenSurvey}><Send size={16} /> Preview survey</button></section><section className="mini-stat-grid"><MiniStat label="Response rate" value="68%" note="+6% vs June" /><MiniStat label="Median time saved" value="47 min" note="per sampled task" /><MiniStat label="Realization reported" value="84%" note="of time savings" /><MiniStat label="Sampling bias" value="Low" note="weights applied" /></section><section className="panel records-panel"><div className="panel-header"><div><p className="section-kicker">Latest evidence</p><h2>Sample responses</h2></div><EvidenceBadge grade="Estimated" /></div><div className="table-scroll"><table><thead><tr><th>Role and team</th><th>Product</th><th>Work type</th><th>Time saved</th><th>Effect</th><th>Enabled outcome</th><th>Date</th></tr></thead><tbody>{responses.map((item) => <tr key={item.id}><td><strong>{item.role}</strong><span className="cell-subtitle">{item.team}</span></td><td><span className="product-cell"><ProductMark product={item.product} />{item.product}</span></td><td>{item.workType}</td><td><strong>{item.timeSaved}</strong></td><td>{item.effect}</td><td>{item.outcome}</td><td>{item.date}</td></tr>)}</tbody></table></div></section></div>
+  const target = 385
+  const collected = responses.length
+  const progress = Math.min(100, Math.round((collected / target) * 100))
+  const remaining = Math.max(0, target - collected)
+  const minutesByBucket: Record<string, number> = { None: 0, '<15 minutes': 7.5, '15–60 minutes': 37.5, '1–4 hours': 150, '>4 hours': 300 }
+  const minutes = responses.map((item) => minutesByBucket[item.timeSaved] ?? 0).sort((a, b) => a - b)
+  const median = minutes.length === 0 ? 0 : minutes[Math.floor((minutes.length - 1) / 2)]
+  const medianLabel = median >= 60 ? `${(median / 60).toFixed(1)} h` : `${Math.round(median)} min`
+  const withOutcome = responses.filter((item) => item.outcome && item.outcome !== 'No identified outcome').length
+  const outcomeRate = collected === 0 ? 0 : Math.round((withOutcome / collected) * 100)
+  const products = new Set(responses.map((item) => item.product)).size
+  return <div className="page-content"><section className="sampling-banner"><div className="sampling-icon"><MessageSquareText size={24} /></div><div><p className="section-kicker">Stratified experience sampling</p><h2>July collection progress</h2><p>{collected} of {target} target responses · balanced across product, role, team, and usage intensity</p></div><div className="sampling-progress"><strong>{progress}%</strong><div><i style={{ width: `${progress}%` }} /></div><span>{remaining} responses remaining</span></div><button className="primary-button" onClick={onOpenSurvey}><Send size={16} /> Preview survey</button></section><section className="mini-stat-grid"><MiniStat label="Responses collected" value={collected.toLocaleString()} note={`of ${target} target`} /><MiniStat label="Median time saved" value={medianLabel} note="per sampled task" /><MiniStat label="Outcome identified" value={`${outcomeRate}%`} note="of responses" /><MiniStat label="Products sampled" value={String(products)} note="distinct products" /></section><section className="panel records-panel"><div className="panel-header"><div><p className="section-kicker">Latest evidence</p><h2>Sample responses</h2></div><EvidenceBadge grade="Estimated" /></div><div className="table-scroll"><table><thead><tr><th>Role and team</th><th>Product</th><th>Work type</th><th>Time saved</th><th>Effect</th><th>Enabled outcome</th><th>Date</th></tr></thead><tbody>{responses.map((item) => <tr key={item.id}><td><strong>{item.role}</strong><span className="cell-subtitle">{item.team}</span></td><td><span className="product-cell"><ProductMark product={item.product} />{item.product}</span></td><td>{item.workType}</td><td><strong>{item.timeSaved}</strong></td><td>{item.effect}</td><td>{item.outcome}</td><td>{item.date}</td></tr>)}</tbody></table></div></section></div>
 }
 
 function Hypotheses({ hypotheses, onOpen }: { hypotheses: Hypothesis[]; onOpen: () => void }) {
-  return <div className="page-content"><PageIntro kicker="Quarterly value planning" title="Connect AI use to an outcome before measuring it" text="Managers register a small number of testable claims. Teams do not document every task." action={<button className="primary-button" onClick={onOpen}><Plus size={17} /> Add hypothesis</button>} /><section className="hypothesis-grid">{hypotheses.map((item) => <article className="hypothesis-card" key={item.id}><div className="hypothesis-top"><span className="product-chip"><ProductMark product={item.product} />{item.product}</span><button className="icon-button"><MoreHorizontal size={18} /></button></div><h3>{item.useCase}</h3><p className="owner"><Users size={15} />{item.owner}</p><div className="hypothesis-flow"><div><span>Expected effect</span><strong>{item.expectedEffect}</strong></div><ArrowRight size={18} /><div><span>Business outcome</span><strong>{item.outcome}</strong></div></div><div className="evidence-source"><Database size={15} /><div><span>Evidence source</span><strong>{item.evidence}</strong></div></div><div className="card-footer"><span className={`status-pill ${item.status.toLowerCase().replaceAll(' ', '-')}`}><span />{item.status}</span><button>Open claim <ArrowRight size={14} /></button></div></article>)}</section></div>
+  return <div className="page-content"><PageIntro kicker="Quarterly value planning" title="Connect AI use to an outcome before measuring it" text="Managers register a small number of testable claims. Teams do not document every task." action={<button className="primary-button" onClick={onOpen}><Plus size={17} /> Add hypothesis</button>} /><section className="hypothesis-grid">{hypotheses.map((item) => <article className="hypothesis-card" key={item.id}><div className="hypothesis-top"><span className="product-chip"><ProductMark product={item.product} />{item.product}</span><button className="icon-button"><MoreHorizontal size={18} /></button></div><h3>{item.useCase}</h3><p className="owner"><Users size={15} />{item.owner}</p><div className="hypothesis-flow"><div><span>Expected effect</span><strong>{item.expectedEffect}</strong></div><ArrowRight size={18} /><div><span>Business outcome</span><strong>{item.outcome}</strong></div></div><div className="evidence-source"><Database size={15} /><div><span>Evidence source</span><strong>{item.evidence}</strong></div></div><div className="card-footer"><span className={`status-pill ${item.status.toLowerCase().replaceAll(' ', '-')}`}><span />{item.status}</span></div></article>)}</section></div>
 }
 
 function Studies() {
   const ordered = [...studies].sort((a, b) => Number(Boolean(b.baseline)) - Number(Boolean(a.baseline)))
-  return <div className="page-content"><PageIntro kicker="Causal evidence" title="Focused studies for the claims that matter most" text="Broad sampling discovers promising use cases. These studies test whether Copilot caused a measurable outcome." action={<button className="primary-button"><Plus size={17} /> Design study</button>} /><section className="study-grid">{ordered.map(({ icon: Icon, ...study }) => <article className="study-card" key={study.id}><div className="study-heading"><div className="study-icon"><Icon size={21} /></div><div><span className="product-chip"><ProductMark product={study.product} />{study.product}</span><h3>{study.title}</h3></div><button className="icon-button"><MoreHorizontal size={18} /></button></div><div className="study-design"><FlaskConical size={16} /><span>{study.group}</span></div><div className="study-result"><span>{study.metric}</span><strong>{study.result}</strong>{study.baseline ? <div className="study-baseline"><span className="baseline-from">{study.baseline}</span><ArrowRight size={13} /><span className="baseline-to">{study.current}</span></div> : <span className="no-baseline">No baseline set</span>}{study.comparison && <div className="study-comparison"><span>Basis</span>{study.comparison}</div>}</div><div className="study-progress"><div><i style={{ width: `${study.progress}%` }} /></div><span>{study.progress === 100 ? 'Study complete' : `${study.progress}% data collected`}</span></div><div className="study-footer"><EvidenceBadge grade={study.grade} /><span className={`confidence-pill ${study.confidence.toLowerCase()}`}>{study.confidence} confidence</span><button>View protocol <ArrowRight size={14} /></button></div></article>)}</section><section className="methodology-note"><ShieldCheck size={22} /><div><strong>Methodology guardrail</strong><p>Users are not compared directly with non-users. Studies use matched teams, stable pre/post measures, or staggered rollout to reduce selection bias. A baseline shows the comparison each result is measured against.</p></div></section></div>
+  return <div className="page-content"><PageIntro kicker="Causal evidence" title="Focused studies for the claims that matter most" text="Broad sampling discovers promising use cases. These studies test whether Copilot caused a measurable outcome." /><section className="study-grid">{ordered.map(({ icon: Icon, ...study }) => <article className="study-card" key={study.id}><div className="study-heading"><div className="study-icon"><Icon size={21} /></div><div><span className="product-chip"><ProductMark product={study.product} />{study.product}</span><h3>{study.title}</h3></div><button className="icon-button"><MoreHorizontal size={18} /></button></div><div className="study-design"><FlaskConical size={16} /><span>{study.group}</span></div><div className="study-result"><span>{study.metric}</span><strong>{study.result}</strong>{study.baseline ? <div className="study-baseline"><span className="baseline-from">{study.baseline}</span><ArrowRight size={13} /><span className="baseline-to">{study.current}</span></div> : <span className="no-baseline">No baseline set</span>}{study.comparison && <div className="study-comparison"><span>Basis</span>{study.comparison}</div>}</div><div className="study-progress"><div><i style={{ width: `${study.progress}%` }} /></div><span>{study.progress === 100 ? 'Study complete' : `${study.progress}% data collected`}</span></div><div className="study-footer"><EvidenceBadge grade={study.grade} /><span className={`confidence-pill ${study.confidence.toLowerCase()}`}>{study.confidence} confidence</span><span className="study-value">Gross {formatCurrency(study.grossValue)}</span></div></article>)}</section><section className="methodology-note"><ShieldCheck size={22} /><div><strong>Methodology guardrail</strong><p>Users are not compared directly with non-users. Studies use matched teams, stable pre/post measures, or staggered rollout to reduce selection bias. A baseline shows the comparison each result is measured against.</p></div></section></div>
 }
 
 function Imports({ imports, fileInput, onImport }: { imports: ImportRecord[]; fileInput: RefObject<HTMLInputElement | null>; onImport: (file: File) => void }) {
-  return <div className="page-content"><PageIntro kicker="Portfolio inputs" title="Bring cost, usage, and organization data together" text="Upload aggregate exports. Message content, prompts, and source code are neither required nor collected." /><section className="import-layout"><div className="upload-panel" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); const file = event.dataTransfer.files[0]; if (file) onImport(file) }}><div className="upload-icon"><Upload size={26} /></div><h3>Import a CSV export</h3><p>Drop a GitHub Copilot, Microsoft 365, or employee mapping export here.</p><input ref={fileInput} type="file" accept=".csv,text/csv" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) onImport(file); event.target.value = '' }} /><button className="secondary-button" onClick={() => fileInput.current?.click()}><FileSpreadsheet size={16} /> Choose CSV file</button><span className="upload-hint">Expected fields include product, team, role, user, consumption, and cost.</span></div><div className="privacy-panel"><ShieldCheck size={22} /><div><p className="section-kicker">Privacy by design</p><h3>Measure value, not people</h3><ul>{['Aggregate reporting by default', 'No prompt or content inspection', 'Minimum team-size thresholds', 'Role-based access ready'].map((text) => <li key={text}><Check size={15} />{text}</li>)}</ul></div></div></section><section className="panel records-panel"><div className="panel-header"><div><p className="section-kicker">Import history</p><h2>Connected datasets</h2></div><button className="text-button"><Download size={15} /> Download template</button></div><div className="table-scroll"><table><thead><tr><th>File</th><th>Source</th><th>Rows</th><th>Imported</th><th>Status</th></tr></thead><tbody>{imports.map((item) => <tr key={item.id}><td><span className="file-cell"><FileSpreadsheet size={17} /><strong>{item.name}</strong></span></td><td>{item.source}</td><td>{item.rows.toLocaleString()}</td><td>{item.date}</td><td><span className={`import-status ${item.status === 'Ready' ? 'ready' : 'mapping'}`}><span />{item.status}</span></td></tr>)}</tbody></table></div></section></div>
+  return <div className="page-content"><PageIntro kicker="Portfolio inputs" title="Bring cost, usage, and organization data together" text="Upload aggregate exports. Message content, prompts, and source code are neither required nor collected." /><section className="import-layout"><div className="upload-panel" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); const file = event.dataTransfer.files[0]; if (file) onImport(file) }}><div className="upload-icon"><Upload size={26} /></div><h3>Import a CSV export</h3><p>Drop a GitHub Copilot, Microsoft 365, or employee mapping export here.</p><input ref={fileInput} type="file" accept=".csv,text/csv" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) onImport(file); event.target.value = '' }} /><button className="secondary-button" onClick={() => fileInput.current?.click()}><FileSpreadsheet size={16} /> Choose CSV file</button><span className="upload-hint">Expected fields include product, team, role, user, consumption, and cost.</span></div><div className="privacy-panel"><ShieldCheck size={22} /><div><p className="section-kicker">Privacy by design</p><h3>Measure value, not people</h3><ul>{['Aggregate reporting by default', 'No prompt or content inspection', 'Minimum team-size thresholds', 'Role-based access ready'].map((text) => <li key={text}><Check size={15} />{text}</li>)}</ul></div></div></section><section className="panel records-panel"><div className="panel-header"><div><p className="section-kicker">Import history</p><h2>Connected datasets</h2></div><button className="text-button" onClick={() => downloadBlob('proofline-import-template.csv', importTemplateCsv, 'text/csv')}><Download size={15} /> Download template</button></div><div className="table-scroll"><table><thead><tr><th>File</th><th>Source</th><th>Rows</th><th>Imported</th><th>Status</th></tr></thead><tbody>{imports.map((item) => <tr key={item.id}><td><span className="file-cell"><FileSpreadsheet size={17} /><strong>{item.name}</strong></span>{item.note && <span className="cell-subtitle">{item.note}</span>}</td><td>{item.source}</td><td>{item.rows.toLocaleString()}</td><td>{item.date}</td><td><span className={`import-status ${item.status === 'Ready' ? 'ready' : 'mapping'}`}><span />{item.status}</span></td></tr>)}</tbody></table></div></section></div>
 }
 
 function PageIntro({ kicker, title, text, action }: { kicker: string; title: string; text: string; action?: ReactNode }) { return <section className="page-intro"><div><p className="section-kicker">{kicker}</p><h2>{title}</h2><p>{text}</p></div>{action}</section> }

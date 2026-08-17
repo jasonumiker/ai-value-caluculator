@@ -184,3 +184,19 @@ To validate a production build:
 npm run build
 npm run lint
 ```
+
+## Run Tests
+
+The project uses [Vitest](https://vitest.dev) with Testing Library. Unit tests in `src/calculations.test.ts` cover the valuation model (evidence and confidence weighting, pillar totals, evidence health, ROI, and survey-hours estimation), and integration tests in `src/App.test.tsx` drive the UI for each workflow the README describes: the portfolio overview, editable valuation sliders, experience-sampling survey, value hypotheses, outcome studies, and CSV ingestion.
+
+Run the full suite once:
+
+```bash
+npm run test
+```
+
+Or run in watch mode during development:
+
+```bash
+npm run test:watch
+```
