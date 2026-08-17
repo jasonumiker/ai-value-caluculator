@@ -12,6 +12,8 @@ import './App.css'
 type Page = 'overview' | 'responses' | 'hypotheses' | 'studies' | 'imports'
 type Product = 'GitHub Copilot' | 'Copilot Cowork'
 type EvidenceGrade = 'Observed' | 'Estimated' | 'Modelled' | 'Anecdotal'
+type Confidence = 'High' | 'Medium' | 'Low'
+type PillarLabel = 'Improved Performance' | 'Cost Savings' | 'Innovation / Transformation' | 'Risk Mitigation'
 
 type ResponseRecord = {
   id: number; role: string; team: string; product: Product; workType: string
@@ -70,13 +72,62 @@ const initialImports: ImportRecord[] = [
 ]
 
 const copilotSpend = 28460
-const otherMechanisms = [
-  { label: 'Earlier delivery', value: 84200, color: '#de7b22' },
-  { label: 'Quality & risk', value: 67900, color: '#2f6fce' },
-  { label: 'Cost avoided', value: 40100, color: '#8391a7' },
-]
-type Assumptions = { loadedHourlyCost: number; realizationFactor: number }
-const defaultAssumptions: Assumptions = { loadedHourlyCost: 65, realizationFactor: 0.55 }
+const pillarMetadata: Record<PillarLabel, { color: string; description: string }> = {
+  'Improved Performance': { color: '#087f6b', description: 'Higher throughput and faster delivery' },
+  'Cost Savings': { color: '#de7b22', description: 'Avoided spend and operating cost' },
+  'Innovation / Transformation': { color: '#2f6fce', description: 'New capabilities and redesigned work' },
+  'Risk Mitigation': { color: '#8391a7', description: 'Better quality, control, and resilience' },
+}
+const evidenceColors: Record<EvidenceGrade, string> = { Observed: '#087f6b', Estimated: '#2f6fce', Modelled: '#de7b22', Anecdotal: '#b4bdc5' }
+type Assumptions = {
+  loadedHourlyCost: number; realizationFactor: number
+  observedWeight: number; estimatedWeight: number; modelledWeight: number; anecdotalWeight: number
+  highConfidenceWeight: number; mediumConfidenceWeight: number; lowConfidenceWeight: number
+}
+const defaultAssumptions: Assumptions = {
+  loadedHourlyCost: 65, realizationFactor: 0.55,
+  observedWeight: 1, estimatedWeight: 0.85, modelledWeight: 0.75, anecdotalWeight: 0.4,
+  highConfidenceWeight: 1, mediumConfidenceWeight: 0.9, lowConfidenceWeight: 0.75,
+}
+const evidenceWeightKeys: Record<EvidenceGrade, keyof Assumptions> = {
+  Observed: 'observedWeight', Estimated: 'estimatedWeight', Modelled: 'modelledWeight', Anecdotal: 'anecdotalWeight',
+}
+const confidenceWeightKeys: Record<Confidence, keyof Assumptions> = {
+  High: 'highConfidenceWeight', Medium: 'mediumConfidenceWeight', Low: 'lowConfidenceWeight',
+}
+
+type ValueContribution = {
+  name: string; pillar: PillarLabel; rawValue: number; grade: EvidenceGrade; confidence: Confidence; adjustedValue: number
+}
+
+function calculatePortfolio(hours: number, assumptions: Assumptions) {
+  const evidenceWeights = Object.fromEntries((Object.keys(evidenceWeightKeys) as EvidenceGrade[]).map((grade) => [grade, assumptions[evidenceWeightKeys[grade]]])) as Record<EvidenceGrade, number>
+  const confidenceWeights = Object.fromEntries((Object.keys(confidenceWeightKeys) as Confidence[]).map((confidence) => [confidence, assumptions[confidenceWeightKeys[confidence]]])) as Record<Confidence, number>
+  const rawContributions: Omit<ValueContribution, 'adjustedValue'>[] = [
+    { name: 'Surveyed productivity', pillar: 'Improved Performance', rawValue: hours * assumptions.loadedHourlyCost * assumptions.realizationFactor, grade: 'Estimated', confidence: 'Medium' },
+    { name: 'Earlier delivery study', pillar: 'Improved Performance', rawValue: 84200, grade: 'Observed', confidence: 'High' },
+    { name: 'Avoided operating cost', pillar: 'Cost Savings', rawValue: 40100, grade: 'Observed', confidence: 'High' },
+    { name: 'New capability cases', pillar: 'Innovation / Transformation', rawValue: 52600, grade: 'Anecdotal', confidence: 'Low' },
+    { name: 'Quality and risk valuation', pillar: 'Risk Mitigation', rawValue: 67900, grade: 'Modelled', confidence: 'Medium' },
+  ]
+  const contributions: ValueContribution[] = rawContributions.map((item) => ({ ...item, adjustedValue: item.rawValue * evidenceWeights[item.grade] * confidenceWeights[item.confidence] }))
+  const rawValue = contributions.reduce((sum, item) => sum + item.rawValue, 0)
+  const adjustedValue = contributions.reduce((sum, item) => sum + item.adjustedValue, 0)
+  const pillars = (Object.keys(pillarMetadata) as PillarLabel[]).map((label) => {
+    const matches = contributions.filter((item) => item.pillar === label)
+    return {
+      label, ...pillarMetadata[label],
+      rawValue: matches.reduce((sum, item) => sum + item.rawValue, 0),
+      value: matches.reduce((sum, item) => sum + item.adjustedValue, 0),
+      sourceCount: matches.length,
+    }
+  })
+  const evidenceMix = (Object.keys(evidenceWeights) as EvidenceGrade[]).map((grade) => ({
+    grade,
+    percentage: rawValue === 0 ? 0 : contributions.filter((item) => item.grade === grade).reduce((sum, item) => sum + item.rawValue, 0) / rawValue * 100,
+  }))
+  return { rawValue, adjustedValue, pillars, evidenceMix, evidenceWeights, confidenceWeights, healthScore: rawValue === 0 ? 0 : Math.round(adjustedValue / rawValue * 100) }
+}
 
 const teamEvidence = [
   { team: 'Digital Channels', product: 'GitHub Copilot' as Product, spend: '$6,840', value: '$91,200', roi: '12.3×', confidence: 'High', trend: '+8%' },
@@ -110,8 +161,9 @@ function App() {
   const [responses, setResponses] = useState<ResponseRecord[]>(() => readStored('proofline-responses', seedResponses))
   const [hypotheses, setHypotheses] = useState<Hypothesis[]>(() => readStored('proofline-hypotheses', seedHypotheses))
   const [imports, setImports] = useState<ImportRecord[]>(() => readStored('proofline-imports', initialImports))
-  const [assumptions, setAssumptions] = useState<Assumptions>(() => readStored('proofline-assumptions', defaultAssumptions))
+  const [assumptions, setAssumptions] = useState<Assumptions>(() => ({ ...defaultAssumptions, ...readStored('proofline-assumptions', defaultAssumptions) }))
   const fileInput = useRef<HTMLInputElement>(null)
+  const portfolioHealth = calculatePortfolio(3080, assumptions).healthScore
 
   const navigate = (next: Page) => { setPage(next); setMenuOpen(false) }
   const showNotice = (message: string) => {
@@ -164,7 +216,7 @@ function App() {
         <p className="nav-label data-label">Manage</p>
         {navigation.slice(4).map(({ id, label, icon: Icon }) => <button className={page === id ? 'active' : ''} onClick={() => navigate(id)} key={id}><Icon size={18} />{label}</button>)}
       </nav>
-      <div className="method-card"><div className="method-icon"><ShieldCheck size={18} /></div><div><strong>Evidence health</strong><span>3 outcome studies active</span></div><div className="health-score">82</div></div>
+      <div className="method-card"><div className="method-icon"><ShieldCheck size={18} /></div><div><strong>Evidence health</strong><span>Value retained after weighting</span></div><div className="health-score">{portfolioHealth}</div></div>
       <div className="sidebar-user"><div className="user-avatar">AM</div><div><strong>Alex Morgan</strong><span>Portfolio owner</span></div><MoreHorizontal size={18} /></div>
     </aside>
 
@@ -188,34 +240,36 @@ function App() {
 }
 
 function Overview({ onNavigate, responseCount, assumptions, onAssumptionChange, onResetAssumptions }: { onNavigate: (page: Page) => void; responseCount: number; assumptions: Assumptions; onAssumptionChange: (key: keyof Assumptions, value: number) => void; onResetAssumptions: () => void }) {
-  const sumOther = otherMechanisms.reduce((sum, item) => sum + item.value, 0)
-  const outputAt = (hours: number) => hours * assumptions.loadedHourlyCost * assumptions.realizationFactor
-  const realizedAt = (hours: number) => outputAt(hours) + sumOther
-  const roiAt = (hours: number) => (realizedAt(hours) - copilotSpend) / copilotSpend
   const hoursLow = 3080, hoursMid = 3620
-  const realizedLow = realizedAt(hoursLow), realizedMid = realizedAt(hoursMid)
+  const lowPortfolio = calculatePortfolio(hoursLow, assumptions)
+  const midPortfolio = calculatePortfolio(hoursMid, assumptions)
+  const realizedLow = lowPortfolio.adjustedValue, realizedMid = midPortfolio.adjustedValue
   const netLow = realizedLow - copilotSpend
-  const roiLow = roiAt(hoursLow), roiMid = roiAt(hoursMid)
-  const potentialCapacityValue = hoursMid * assumptions.loadedHourlyCost
-  const additionalOutput = outputAt(hoursLow)
-  const mechanisms = [{ label: 'Additional output', value: additionalOutput, color: '#087f6b' }, ...otherMechanisms]
-  const maxMechanism = Math.max(...mechanisms.map((item) => item.value))
+  const roiLow = netLow / copilotSpend, roiMid = (realizedMid - copilotSpend) / copilotSpend
+  const pillars = lowPortfolio.pillars
+  const maxPillar = Math.max(...pillars.map((item) => item.value))
+  const mixStops = lowPortfolio.evidenceMix.reduce<{ end: number; stops: string[] }>((result, item) => {
+    const start = result.end
+    const end = start + item.percentage
+    return { end, stops: [...result.stops, `${evidenceColors[item.grade]} ${start}% ${end}%`] }
+  }, { end: 0, stops: [] }).stops.join(', ')
   const hourlyPct = ((assumptions.loadedHourlyCost - 30) / (150 - 30)) * 100
   return <div className="page-content overview-page">
-    <section className="summary-strip"><div className="summary-heading"><div><span className="live-dot" />Portfolio summary</div><p>Headline figures are conservative; upside shows the midpoint estimate</p></div><div className="metric-grid"><Metric label="Copilot spend" value={formatCurrency(copilotSpend)} detail="2 products · 518 people" icon={CircleDollarSign} /><Metric label="Realized value" value={formatCurrency(realizedLow)} detail={`Upside ${formatShort(realizedMid)}`} icon={Target} emphasis /><Metric label="Net value" value={formatCurrency(netLow)} detail="After AI consumption" icon={TrendingUp} /><Metric label="Portfolio ROI" value={`${roiLow.toFixed(1)}×`} detail={`Upside ${roiMid.toFixed(1)}×`} icon={Gauge} /></div></section>
-    <section className="panel assumptions-panel"><div className="assumptions-head"><div><p className="section-kicker">Modelling assumptions</p><h2>Adjust the two levers that move ROI most</h2><p className="assumptions-sub">These are visible, editable assumptions — not measured facts. Change them to stress-test the model.</p></div><button className="text-button" onClick={onResetAssumptions}>Reset to defaults</button></div><div className="assumptions-body"><div className="assumption"><div className="assumption-top"><span>Loaded hourly cost</span><strong>{formatCurrency(assumptions.loadedHourlyCost)}/hr</strong></div><input type="range" min={30} max={150} step={5} value={assumptions.loadedHourlyCost} onChange={(event) => onAssumptionChange('loadedHourlyCost', Number(event.target.value))} aria-label="Loaded hourly cost" style={{ backgroundSize: `${hourlyPct}% 100%` }} /><div className="assumption-scale"><span>$30</span><span>$150</span></div></div><div className="assumption"><div className="assumption-top"><span>Realization factor</span><strong>{Math.round(assumptions.realizationFactor * 100)}%</strong></div><input type="range" min={0} max={100} step={5} value={Math.round(assumptions.realizationFactor * 100)} onChange={(event) => onAssumptionChange('realizationFactor', Number(event.target.value) / 100)} aria-label="Realization factor" style={{ backgroundSize: `${Math.round(assumptions.realizationFactor * 100)}% 100%` }} /><div className="assumption-scale"><span>0%</span><span>100%</span></div></div><div className="assumption-readout"><div><span>Conservative ROI</span><strong className="readout-roi">{roiLow.toFixed(1)}×</strong></div><div><span>Midpoint (upside)</span><strong>{roiMid.toFixed(1)}×</strong></div></div></div></section>
+    <section className="summary-strip"><div className="summary-heading"><div><span className="live-dot" />Portfolio summary</div><p>Headline figures are evidence-adjusted; upside shows the midpoint estimate</p></div><div className="metric-grid"><Metric label="Copilot spend" value={formatCurrency(copilotSpend)} detail="2 products · 518 people" icon={CircleDollarSign} /><Metric label="Adjusted value" value={formatCurrency(realizedLow)} detail={`Gross ${formatShort(lowPortfolio.rawValue)}`} icon={Target} emphasis /><Metric label="Net value" value={formatCurrency(netLow)} detail="After evidence weights and AI cost" icon={TrendingUp} /><Metric label="Portfolio ROI" value={`${roiLow.toFixed(1)}×`} detail={`Upside ${roiMid.toFixed(1)}×`} icon={Gauge} /></div></section>
+    <section className="panel assumptions-panel"><div className="assumptions-head"><div><p className="section-kicker">Modelling assumptions</p><h2>Adjust valuation inputs and evidence policy</h2><p className="assumptions-sub">Every input persists in this browser and recomputes adjusted value, evidence health, and ROI immediately.</p></div><button className="text-button" onClick={onResetAssumptions}>Reset to defaults</button></div><div className="assumptions-body"><div className="assumption"><div className="assumption-top"><span>Loaded hourly cost</span><strong>{formatCurrency(assumptions.loadedHourlyCost)}/hr</strong></div><input type="range" min={30} max={150} step={5} value={assumptions.loadedHourlyCost} onChange={(event) => onAssumptionChange('loadedHourlyCost', Number(event.target.value))} aria-label="Loaded hourly cost" style={{ backgroundSize: `${hourlyPct}% 100%` }} /><div className="assumption-scale"><span>$30</span><span>$150</span></div></div><div className="assumption"><div className="assumption-top"><span>Realization factor</span><strong>{Math.round(assumptions.realizationFactor * 100)}%</strong></div><input type="range" min={0} max={100} step={5} value={Math.round(assumptions.realizationFactor * 100)} onChange={(event) => onAssumptionChange('realizationFactor', Number(event.target.value) / 100)} aria-label="Realization factor" style={{ backgroundSize: `${Math.round(assumptions.realizationFactor * 100)}% 100%` }} /><div className="assumption-scale"><span>0%</span><span>100%</span></div></div><div className="assumption-readout"><div><span>Evidence-adjusted ROI</span><strong className="readout-roi">{roiLow.toFixed(1)}×</strong></div><div><span>Value retained</span><strong>{lowPortfolio.healthScore}%</strong></div></div></div><div className="weight-policy"><section><span>Evidence weights</span><div className="weight-grid">{(Object.keys(evidenceWeightKeys) as EvidenceGrade[]).map((grade) => <WeightControl key={grade} label={grade} grade={grade} value={assumptions[evidenceWeightKeys[grade]]} onChange={(value) => onAssumptionChange(evidenceWeightKeys[grade], value)} />)}</div></section><section><span>Confidence multipliers</span><div className="weight-grid confidence-grid">{(Object.keys(confidenceWeightKeys) as Confidence[]).map((confidence) => <WeightControl key={confidence} label={confidence} value={assumptions[confidenceWeightKeys[confidence]]} onChange={(value) => onAssumptionChange(confidenceWeightKeys[confidence], value)} />)}</div></section></div></section>
     <section className="dashboard-grid">
-      <article className="panel value-panel"><PanelTitle kicker="Value composition" title="How value was realized" /><div className="value-total"><strong>{formatShort(realizedLow)}</strong><span className="value-tag">conservative</span><span className="value-upside"><TrendingUp size={14} /> midpoint {formatShort(realizedMid)}</span></div><div className="stacked-bar">{mechanisms.map((item) => <span key={item.label} style={{ width: `${item.value / realizedLow * 100}%`, background: item.color }} />)}</div><div className="mechanism-list">{mechanisms.map((item) => <div className="mechanism-row" key={item.label}><span className="legend-dot" style={{ background: item.color }} /><span>{item.label}</span><div className="micro-bar"><i style={{ width: `${item.value / maxMechanism * 100}%`, background: item.color }} /></div><strong>{formatShort(item.value)}</strong></div>)}</div></article>
-      <article className="panel evidence-panel"><div className="panel-header"><div><p className="section-kicker">Evidence mix</p><h2>How strong is the claim?</h2></div><button className="text-button" onClick={() => onNavigate('studies')}>View studies <ArrowRight size={15} /></button></div><div className="evidence-donut-wrap"><div className="evidence-donut"><div><strong>82</strong><span>health score</span></div></div><div className="evidence-legend"><div><EvidenceBadge grade="Observed" /><strong>42%</strong></div><div><EvidenceBadge grade="Estimated" /><strong>31%</strong></div><div><EvidenceBadge grade="Modelled" /><strong>21%</strong></div><div><EvidenceBadge grade="Anecdotal" /><strong>6%</strong></div></div></div><div className="evidence-callout"><Info size={17} /><span><strong>Good coverage.</strong> Add observed quality data to strengthen customer operations.</span></div></article>
-      <article className="panel capacity-panel"><div className="panel-header"><div><p className="section-kicker">Capacity realization</p><h2>What happened to saved time?</h2></div><span className="response-count">{responseCount} sampled responses</span></div><div className="capacity-layout"><div><div className="big-stat">3,620<span>hrs</span></div><p>Estimated capacity released</p><div className="confidence"><ShieldCheck size={15} /> 95% interval: 3,080–4,160 hrs</div><div className="capacity-values"><div><span>Potential value</span><strong>{formatCurrency(potentialCapacityValue)}</strong></div><div><span>Realized (output)</span><strong>{formatCurrency(outputAt(hoursMid))}</strong></div></div></div><div className="outcome-bars">{[['More output', 38], ['Earlier delivery', 27], ['Quality / scope', 19], ['Reduced pressure', 10], ['Not identified', 6]].map(([label, value]) => <div key={label}><span>{label}<strong>{value}%</strong></span><div><i style={{ width: `${value}%` }} /></div></div>)}</div></div></article>
+      <article className="panel value-panel"><PanelTitle kicker="Business Value pillars" title="Evidence-adjusted value" /><div className="value-total"><strong>{formatShort(realizedLow)}</strong><span className="value-tag">adjusted</span><span className="value-upside"><TrendingUp size={14} /> gross {formatShort(lowPortfolio.rawValue)}</span></div><div className="stacked-bar">{pillars.map((item) => <span key={item.label} style={{ width: `${item.value / realizedLow * 100}%`, background: item.color }} />)}</div><div className="mechanism-list">{pillars.map((item) => <div className="mechanism-row" key={item.label}><span className="legend-dot" style={{ background: item.color }} /><span>{item.label}</span><div className="micro-bar"><i style={{ width: `${item.value / maxPillar * 100}%`, background: item.color }} /></div><strong>{formatShort(item.value)}</strong></div>)}</div></article>
+      <article className="panel evidence-panel"><div className="panel-header"><div><p className="section-kicker">Evidence mix</p><h2>How strong is the portfolio?</h2></div><button className="text-button" onClick={() => onNavigate('studies')}>View studies <ArrowRight size={15} /></button></div><div className="evidence-donut-wrap"><div className="evidence-donut" style={{ background: `conic-gradient(${mixStops})` }}><div><strong>{lowPortfolio.healthScore}</strong><span>value retained</span></div></div><div className="evidence-legend">{lowPortfolio.evidenceMix.map((item) => <div key={item.grade}><EvidenceBadge grade={item.grade} /><span><strong>{Math.round(item.percentage)}%</strong><small>{Math.round(lowPortfolio.evidenceWeights[item.grade] * 100)}% weight</small></span></div>)}</div></div><div className="evidence-callout"><Info size={17} /><span><strong>{formatCurrency(realizedLow)} retained from {formatCurrency(lowPortfolio.rawValue)} gross value.</strong> Each contribution is adjusted by its evidence and confidence weights.</span></div></article>
+      <article className="panel pillars-panel"><div className="panel-header"><div><p className="section-kicker">Microsoft Business Value framework</p><h2>Value across four strategic pillars</h2></div><span className="response-count">{responseCount} sampled responses</span></div><div className="pillar-grid">{pillars.map((pillar) => <div className="pillar-summary" key={pillar.label}><span className="pillar-swatch" style={{ background: pillar.color }} /><div><span>{pillar.label}</span><strong>{formatCurrency(pillar.value)}</strong><p>{pillar.description}</p><small>Gross {formatCurrency(pillar.rawValue)} · {pillar.sourceCount} evidence source{pillar.sourceCount === 1 ? '' : 's'}</small></div></div>)}</div></article>
     </section>
-    <section className="panel team-panel"><div className="panel-header"><div><p className="section-kicker">Portfolio detail</p><h2>Evidence by team</h2></div><div className="table-actions"><label><Search size={15} /><input placeholder="Find a team" aria-label="Find a team" /></label><button className="filter-button">All evidence <ChevronDown size={14} /></button></div></div><div className="table-scroll"><table><thead><tr><th>Team</th><th>Product</th><th>Spend</th><th>Realized value</th><th>ROI</th><th>Evidence</th><th>Trend</th></tr></thead><tbody>{teamEvidence.map((row) => <tr key={row.team}><td><strong>{row.team}</strong></td><td><span className="product-cell"><ProductMark product={row.product} />{row.product}</span></td><td>{row.spend}</td><td><strong>{row.value}</strong></td><td><span className="roi-pill">{row.roi}</span></td><td><span className={`confidence-pill ${row.confidence.toLowerCase()}`}>{row.confidence}</span></td><td><span className="trend-value">{row.trend}</span></td></tr>)}</tbody></table></div><button className="table-footer" onClick={() => onNavigate('hypotheses')}>View all teams and hypotheses <ArrowRight size={15} /></button></section>
+    <section className="panel team-panel"><div className="panel-header"><div><p className="section-kicker">Portfolio detail</p><h2>Evidence by team</h2></div><div className="table-actions"><label><Search size={15} /><input placeholder="Find a team" aria-label="Find a team" /></label><button className="filter-button">All evidence <ChevronDown size={14} /></button></div></div><div className="table-scroll"><table><thead><tr><th>Team</th><th>Product</th><th>Spend</th><th>Adjusted value</th><th>ROI</th><th>Confidence</th><th>Trend</th></tr></thead><tbody>{teamEvidence.map((row) => <tr key={row.team}><td><strong>{row.team}</strong></td><td><span className="product-cell"><ProductMark product={row.product} />{row.product}</span></td><td>{row.spend}</td><td><strong>{row.value}</strong></td><td><span className="roi-pill">{row.roi}</span></td><td><span className={`confidence-pill ${row.confidence.toLowerCase()}`}>{row.confidence}</span></td><td><span className="trend-value">{row.trend}</span></td></tr>)}</tbody></table></div><button className="table-footer" onClick={() => onNavigate('hypotheses')}>View all teams and hypotheses <ArrowRight size={15} /></button></section>
   </div>
 }
 
 function PanelTitle({ kicker, title }: { kicker: string; title: string }) { return <div className="panel-header"><div><p className="section-kicker">{kicker}</p><h2>{title}</h2></div><button className="icon-button" aria-label="More options"><MoreHorizontal size={19} /></button></div> }
 function Metric({ label, value, detail, icon: Icon, emphasis = false }: { label: string; value: string; detail: string; icon: typeof Activity; emphasis?: boolean }) { return <div className={`metric ${emphasis ? 'emphasis' : ''}`}><div className="metric-label"><Icon size={16} />{label}</div><strong>{value}</strong><span>{detail}</span></div> }
 function MiniStat({ label, value, note }: { label: string; value: string; note: string }) { return <div className="mini-stat"><span>{label}</span><strong>{value}</strong><p>{note}</p></div> }
+function WeightControl({ label, grade, value, onChange }: { label: string; grade?: EvidenceGrade; value: number; onChange: (value: number) => void }) { return <label className="weight-control"><span>{grade ? <EvidenceBadge grade={grade} /> : label}<strong>{Math.round(value * 100)}%</strong></span><input type="range" min={0} max={100} step={5} value={Math.round(value * 100)} onChange={(event) => onChange(Number(event.target.value) / 100)} aria-label={`${label} weight`} style={{ backgroundSize: `${Math.round(value * 100)}% 100%` }} /></label> }
 
 function Responses({ responses, onOpenSurvey }: { responses: ResponseRecord[]; onOpenSurvey: () => void }) {
   return <div className="page-content"><section className="sampling-banner"><div className="sampling-icon"><MessageSquareText size={24} /></div><div><p className="section-kicker">Stratified experience sampling</p><h2>July collection is on track</h2><p>287 of 385 target responses · balanced across product, role, team, and usage intensity</p></div><div className="sampling-progress"><strong>75%</strong><div><i style={{ width: '75%' }} /></div><span>98 responses remaining</span></div><button className="primary-button" onClick={onOpenSurvey}><Send size={16} /> Preview survey</button></section><section className="mini-stat-grid"><MiniStat label="Response rate" value="68%" note="+6% vs June" /><MiniStat label="Median time saved" value="47 min" note="per sampled task" /><MiniStat label="Realization reported" value="84%" note="of time savings" /><MiniStat label="Sampling bias" value="Low" note="weights applied" /></section><section className="panel records-panel"><div className="panel-header"><div><p className="section-kicker">Latest evidence</p><h2>Sample responses</h2></div><EvidenceBadge grade="Estimated" /></div><div className="table-scroll"><table><thead><tr><th>Role and team</th><th>Product</th><th>Work type</th><th>Time saved</th><th>Effect</th><th>Enabled outcome</th><th>Date</th></tr></thead><tbody>{responses.map((item) => <tr key={item.id}><td><strong>{item.role}</strong><span className="cell-subtitle">{item.team}</span></td><td><span className="product-cell"><ProductMark product={item.product} />{item.product}</span></td><td>{item.workType}</td><td><strong>{item.timeSaved}</strong></td><td>{item.effect}</td><td>{item.outcome}</td><td>{item.date}</td></tr>)}</tbody></table></div></section></div>
